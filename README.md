@@ -25,7 +25,7 @@ npm install
 node src/gen-key.js
 ```
 
-Copy the printed secret (hex) or nsec into env as `BUZZ_PRIVATE_KEX`. Keep pubkey/npub to add the agent as a member.
+Copy the printed secret (hex) or nsec into env as `BUZZ_PRIVATE_KEY`. Keep pubkey/npub to add the agent as a member.
 
 ## Environment
 
@@ -105,6 +105,9 @@ Absolute path example on this box: `/workspace/buzz-mcp/src/index.js`
 | get_messages | Messages in a channel (#h), kinds 9, 40002, 40008, 45001, 45003 |
 | search_messages | Same kinds + NIP-50 search |
 | send_message | Sign kind 9 with [h, channel_id] (+ optional e reply), POST /events |
+| create_channel | Sign kind 9007 with [h, uuid], [name], [visibility], [channel_type], optional [about]; POST /events. Returns the channel_id |
+
+> `POST /query` takes a **bare JSON array of filters** (`[{...}]`), not `{"filters": [...]}` — the relay deserialises `Vec<Filter>` and rejects a map with `invalid filters: invalid type: map, expected a sequence`.
 
 ## Auth (NIP-98)
 

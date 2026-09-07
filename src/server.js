@@ -137,6 +137,16 @@ async function relayFetch(method, path, { body, accept, query } = {}) {
   return json ?? text;
 }
 
+/**
+ * POST /query. The Buzz bridge deserialises the body as `Vec<Filter>` —
+ * a bare JSON array of NIP-01 filters. Wrapping it in `{filters: [...]}`
+ * is rejected with "invalid filters: invalid type: map, expected a sequence".
+ */
+async function queryRelay(filters) {
+  const payload = await relayFetch('POST', '/query', { body: filters });
+  return extractEvents(payload);
+}
+
 function textResult(obj) {
   const payload = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
   return { content: [{ type: 'text', text: payload }] };
@@ -212,7 +222,7 @@ function extractEvents(payload) {
 export function createBuzzMcpServer() {
   const server = new McpServer({
     name: 'trego-buzz',
-    version: '1.0.0',
+    version: '1.1.0',
   });
 
   server.registerTool(
@@ -247,12 +257,7 @@ export function createBuzzMcpServer() {
     },
     async () => {
       try {
-        const payload = await relayFetch('POST', '/query', {
-          body: {
-            filters: [{ kinds: [39000], limit: 200 }],
-          },
-        });
-        const events = extractEvents(payload);
+        const events = await queryRelay([{ kinds: [39000], limit: 200 }]);
         const channels = events.map(parseChannel);
         return textResult({ count: channels.length, channels });
       } catch (err) {
@@ -279,18 +284,15 @@ export function createBuzzMcpServer() {
     },
     async ({ channel_id, limit }) => {
       try {
-        const payload = await relayFetch('POST', '/query', {
-          body: {
-            filters: [
-              {
-                kinds: [9, 40002, 40008, 45001, 45003],
-                '#h': [channel_id],
-                limit: limit ?? 50,
-              },
-            ],
-          },
-        });
-        const events = extractEvents(payload).map(summarizeEvent);
+        const events = (
+          await queryRelay([
+            {
+              kinds: [9, 40002, 40008, 45001, 45003],
+              '#h': [channel_id],
+              limit: limit ?? 50,
+            },
+          ])
+        ).map(summarizeEvent);
         return textResult({ channel_id, count: events.length, messages: events });
       } catch (err) {
         return errorResult(err);
@@ -315,18 +317,15 @@ export function createBuzzMcpServer() {
     },
     async ({ query, limit }) => {
       try {
-        const payload = await relayFetch('POST', '/query', {
-          body: {
-            filters: [
-              {
-                kinds: [9, 40002, 40008, 45001, 45003],
-                search: query,
-                limit: limit ?? 50,
-              },
-            ],
-          },
-        });
-        const events = extractEvents(payload).map(summarizeEvent);
+        const events = (
+          await queryRelay([
+            {
+              kinds: [9, 40002, 40008, 45001, 45003],
+              search: query,
+              limit: limit ?? 50,
+            },
+          ])
+        ).map(summarizeEvent);
         return textResult({ query, count: events.length, messages: events });
       } catch (err) {
         return errorResult(err);
@@ -371,6 +370,63 @@ export function createBuzzMcpServer() {
           ok: true,
           event_id: event.id,
           channel_id,
+          pubkey: event.pubkey,
+          relay_response: payload,
+        });
+      } catch (err) {
+        return errorResult(err);
+      }
+    }
+  );
+
+  server.registerTool(
+    'create_channel',
+    {
+      description:
+        'Create a Buzz channel (NIP-29 kind 9007). Tags: name (required), visibility (open|private, default open), channel_type (stream|forum|workflow, default stream), about (optional description). A client UUID is sent as the h-tag so the returned channel_id is authoritative. Creator (agent pubkey) becomes owner.',
+      inputSchema: {
+        name: z.string().min(1).describe('Channel name (leading # is stripped by the relay)'),
+        about: z.string().optional().describe('Optional channel description'),
+        visibility: z
+          .enum(['open', 'private'])
+          .optional()
+          .describe('open = anyone in the community can join; private = invite-only (default open)'),
+        channel_type: z
+          .enum(['stream', 'forum', 'workflow'])
+          .optional()
+          .describe('stream = linear chat (default); forum = threaded; workflow = internal'),
+      },
+    },
+    async ({ name, about, visibility, channel_type }) => {
+      try {
+        const channelId = randomUUID();
+        const tags = [
+          ['h', channelId],
+          ['name', name],
+          ['visibility', visibility ?? 'open'],
+          ['channel_type', channel_type ?? 'stream'],
+        ];
+        if (about && about.trim()) tags.push(['about', about.trim()]);
+
+        const event = finalizeEvent(
+          {
+            kind: 9007,
+            created_at: Math.floor(Date.now() / 1000),
+            tags,
+            content: '',
+          },
+          getSecretKey()
+        );
+
+        const payload = await relayFetch('POST', '/events', { body: event });
+
+        return textResult({
+          ok: true,
+          channel_id: channelId,
+          name,
+          visibility: visibility ?? 'open',
+          channel_type: channel_type ?? 'stream',
+          event_id: event.id,
           pubkey: event.pubkey,
           relay_response: payload,
         });
