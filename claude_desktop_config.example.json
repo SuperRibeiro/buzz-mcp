@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "trego-buzz": {
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/to/buzz-mcp/src/index.js"],
+      "env": {
+        "BUZZ_RELAY_URL": "https://trego.communities.buzz.xyz",
+        "BUZZ_PRIVATE_KEY": "YOUR_AGENT_HEX_OR_NSEC"
+      }
+    }
+  }
+}
