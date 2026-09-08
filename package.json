@@ -1,6 +1,6 @@
 {
   "name": "buzz-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server connecting Claude to Miguel's Buzz relay (stdio + remote Streamable HTTP)",
   "type": "module",
   "main": "src/index.js",
@@ -11,7 +11,8 @@
     "start": "node src/http.js",
     "start:stdio": "node src/index.js",
     "start:http": "node src/http.js",
-    "gen-key": "node src/gen-key.js"
+    "gen-key": "node src/gen-key.js",
+    "test:e2e": "bash test/run_e2e.sh"
   },
   "engines": {
     "node": ">=18"
