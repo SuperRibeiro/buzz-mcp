@@ -202,6 +202,8 @@ function summarizeEvent(ev) {
   };
 }
 
+const HEX64 = /^[0-9a-fA-F]{64}$/;
+
 function extractEvents(payload) {
   if (!payload) return [];
   if (Array.isArray(payload)) return payload;
@@ -222,7 +224,7 @@ function extractEvents(payload) {
 export function createBuzzMcpServer() {
   const server = new McpServer({
     name: 'trego-buzz',
-    version: '1.1.0',
+    version: '1.2.0',
   });
 
   server.registerTool(
@@ -429,6 +431,77 @@ export function createBuzzMcpServer() {
           event_id: event.id,
           pubkey: event.pubkey,
           relay_response: payload,
+        });
+      } catch (err) {
+        return errorResult(err);
+      }
+    }
+  );
+
+  server.registerTool(
+    'delete_message',
+    {
+      description:
+        'Delete a message from a Buzz channel via the relay\'s native deletion (NIP-29 kind 9005: tags [h, channel_id], [e, event_id]). ' +
+        'The agent can always delete its own messages; deleting another member\'s message requires the agent pubkey to be channel owner or admin — the relay rejects it otherwise. ' +
+        'After publishing, the relay is re-read and two facts are reported rather than assumed: whether the target is still returned by the relay, and whether the deletion marker is on the relay (clients hide a message once its marker exists).',
+      inputSchema: {
+        channel_id: z.string().min(1).describe('Channel id the message lives in (h-tag, from list_channels)'),
+        event_id: z
+          .string()
+          .regex(HEX64, 'event_id must be a 64-character hex event id')
+          .describe('64-hex id of the message to delete (from get_messages / search_messages)'),
+        reason: z
+          .string()
+          .max(500)
+          .optional()
+          .describe('Optional reason, stored as the deletion event content'),
+      },
+    },
+    async ({ channel_id, event_id, reason }) => {
+      try {
+        const target = event_id.toLowerCase();
+        const event = finalizeEvent(
+          {
+            kind: 9005,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [
+              ['h', channel_id],
+              ['e', target],
+            ],
+            content: reason?.trim() ?? '',
+          },
+          getSecretKey()
+        );
+
+        const payload = await relayFetch('POST', '/events', { body: event });
+
+        // Verify against the relay, never against the request: re-read the target
+        // and the marker. A failed verification read is reported, not hidden.
+        let verification;
+        try {
+          const [targets, markers] = await Promise.all([
+            queryRelay([{ ids: [target] }]),
+            queryRelay([{ kinds: [9005], '#e': [target], limit: 10 }]),
+          ]);
+          verification = {
+            target_still_returned_by_relay: targets.some((ev) => ev.id === target),
+            deletion_marker_on_relay: markers.some((ev) => ev.id === event.id),
+          };
+        } catch (verifyErr) {
+          verification = {
+            error: verifyErr instanceof Error ? verifyErr.message : String(verifyErr),
+          };
+        }
+
+        return textResult({
+          ok: true,
+          deletion_event_id: event.id,
+          target_event_id: target,
+          channel_id,
+          pubkey: event.pubkey,
+          relay_response: payload,
+          verification,
         });
       } catch (err) {
         return errorResult(err);

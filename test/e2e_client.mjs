@@ -17,4 +17,21 @@ const bad = await c.callTool({name:'create_channel', arguments:{name:'x', visibi
 console.log('\n== create_channel invalid visibility →', bad.isError ? 'rejected by zod ✔' : 'NOT REJECTED ✘');
 const sendr = await call('send_message',{channel_id:cc.channel_id, content:'primeira mensagem'});
 if (!sendr.ok) throw new Error('send wrong');
+// delete_message — own message: marker lands, target gone from the relay
+const del = await call('delete_message',{channel_id:cc.channel_id, event_id:sendr.event_id, reason:'posted in error'});
+if (!del.ok || del.target_event_id!==sendr.event_id) throw new Error('delete wrong');
+if (del.verification.deletion_marker_on_relay!==true) throw new Error('marker not on relay');
+if (del.verification.target_still_returned_by_relay!==false) throw new Error('target still returned after delete');
+// delete_message — relay keeps the target but the marker exists: verification must say so honestly
+const prot = await call('delete_message',{channel_id:'11111111-1111-1111-1111-111111111111', event_id:'a'.repeat(64)});
+if (!prot.ok || prot.verification.deletion_marker_on_relay!==true) throw new Error('protected: marker missing');
+if (prot.verification.target_still_returned_by_relay!==true) throw new Error('protected: verification hid a still-visible target');
+// delete_message — not owner/admin on someone else's event: relay 403 surfaces as a tool error, not a silent ok
+const forb = await c.callTool({name:'delete_message', arguments:{channel_id:cc.channel_id, event_id:'f'.repeat(64)}});
+console.log('\n== delete_message forbidden →', forb.isError && /owner\/admin/.test(forb.content[0].text) ? 'relay refusal surfaced ✔' : 'NOT SURFACED ✘');
+if (!forb.isError || !/owner\/admin/.test(forb.content[0].text)) throw new Error('forbidden delete not surfaced');
+// delete_message — malformed id rejected before anything is signed
+const badId = await c.callTool({name:'delete_message', arguments:{channel_id:cc.channel_id, event_id:'not-an-id'}});
+console.log('== delete_message bad id →', badId.isError ? 'rejected by zod ✔' : 'NOT REJECTED ✘');
+if (!badId.isError) throw new Error('bad id not rejected');
 await c.close(); console.log('\nALL ASSERTIONS PASSED');
