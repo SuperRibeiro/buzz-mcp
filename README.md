@@ -106,6 +106,9 @@ Absolute path example on this box: `/workspace/buzz-mcp/src/index.js`
 | search_messages | Same kinds + NIP-50 search |
 | send_message | Sign kind 9 with [h, channel_id] (+ optional e reply), POST /events |
 | create_channel | Sign kind 9007 with [h, uuid], [name], [visibility], [channel_type], optional [about]; POST /events. Returns the channel_id |
+| delete_message | Sign kind 9005 (NIP-29 delete-event) with [h, channel_id], [e, event_id], optional reason as content; POST /events. Then re-reads the relay and reports two facts: whether the target is still returned, and whether the deletion marker is on the relay |
+
+> Deletion follows the relay's own rules (block/buzz `NOSTR.md`): kind 9005 — the event author can always delete their own; deleting another member's event needs the agent pubkey to be channel owner or admin, and the target must be in the same channel. The relay may keep the target and serve the marker beside it — clients hide on the marker — which is why the tool reports both facts instead of claiming "deleted".
 
 > `POST /query` takes a **bare JSON array of filters** (`[{...}]`), not `{"filters": [...]}` — the relay deserialises `Vec<Filter>` and rejects a map with `invalid filters: invalid type: map, expected a sequence`.
 

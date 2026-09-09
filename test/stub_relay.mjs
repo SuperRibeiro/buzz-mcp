@@ -1,6 +1,14 @@
 import http from 'node:http';
 import { verifyEvent } from 'nostr-tools';
 const log = [];
+// Event store mirroring the real bridge's deletion rules (NOSTR.md):
+// kind 9 stored; kind 9005 = delete-event, needs [h] + 64-hex [e]; author can delete own,
+// otherwise owner/admin — the stub refuses ids starting with 'ffff' (not admin) with 403,
+// and keeps the seeded PROTECTED id stored even after its marker lands (relay kept the
+// target; clients hide it via the marker) so the tool's verification path is exercised.
+const PROTECTED = 'a'.repeat(64);
+const store = new Map([[PROTECTED, {id:PROTECTED,kind:9,pubkey:'p',created_at:5,content:'protected',tags:[['h','11111111-1111-1111-1111-111111111111']]}]]);
+const markers = [];
 const server = http.createServer((req, res) => {
   let b=''; req.on('data', c=>b+=c); req.on('end', () => {
     const auth = req.headers.authorization || '';
@@ -13,6 +21,8 @@ const server = http.createServer((req, res) => {
       let parsed; try { parsed = JSON.parse(b); } catch(e){ res.writeHead(400); return res.end(JSON.stringify({error:'invalid filters: '+e.message})); }
       if (!Array.isArray(parsed)) { res.writeHead(400); return res.end(JSON.stringify({error:'invalid filters: invalid type: map, expected a sequence at line 1 column 0'})); }
       const f = parsed[0];
+      if (Array.isArray(f.ids)) return (res.writeHead(200), res.end(JSON.stringify(f.ids.map(id=>store.get(id)).filter(Boolean))));
+      if (f.kinds?.includes(9005) && f['#e']) return (res.writeHead(200), res.end(JSON.stringify(markers.filter(m=>m.tags.some(t=>t[0]==='e' && f['#e'].includes(t[1]))))));
       if (f.kinds?.includes(39000)) return (res.writeHead(200), res.end(JSON.stringify([
         {id:'e1',kind:39000,pubkey:'relay',created_at:1,content:'',tags:[['d','11111111-1111-1111-1111-111111111111'],['name','receipt-capture'],['closed']]},
         {id:'e2',kind:39000,pubkey:'relay',created_at:2,content:'',tags:[['d','22222222-2222-2222-2222-222222222222'],['name','lingua'],['closed'],['about','Frente da Língua']]}])));
@@ -31,6 +41,15 @@ const server = http.createServer((req, res) => {
         if (!/^[0-9a-f-]{36}$/.test(tag('h')||'')) { res.writeHead(400); return res.end('{"error":"h must be uuid"}'); }
       }
       if (ev.kind === 9 && !tag('h')) { res.writeHead(400); return res.end('{"error":"h required"}'); }
+      if (ev.kind === 9) store.set(ev.id, ev);
+      if (ev.kind === 9005) {
+        const target = tag('e');
+        if (!tag('h')) { res.writeHead(400); return res.end('{"error":"invalid: h required for delete-event"}'); }
+        if (!target || !/^[0-9a-f]{64}$/.test(target)) { res.writeHead(400); return res.end('{"error":"invalid: e must be a 64-hex event id"}'); }
+        if (target.startsWith('ffff')) { res.writeHead(403); return res.end('{"error":"restricted: owner/admin required to delete another member\'s event"}'); }
+        markers.push(ev);
+        if (target !== PROTECTED) store.delete(target);
+      }
       return (res.writeHead(200), res.end(JSON.stringify({accepted:true, id:ev.id, kind:ev.kind})));
     }
     res.writeHead(404); res.end();
